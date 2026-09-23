@@ -59,12 +59,21 @@ export function MovementCare() {
   const saveDebrief = useMovementCare((state) => state.saveDebrief);
   const markDebriefSent = useMovementCare((state) => state.markDebriefSent);
   const debriefs = useMovementCare((state) => state.debriefs);
+  
+  // Auto-suggest round based on current hour
+  const defaultRound = useMemo(() => {
+    const hour = new Date().getHours();
+    if (hour < 13) return "BUILD";
+    if (hour < 17) return "MOVE";
+    return "EOD";
+  }, []);
+
   const [role, setRole] = useState<CareRole>(commitment?.role ?? "flow-ops");
   const [goal, setGoal] = useState<CareGoal>(commitment?.goal ?? "FIND");
   const [commitCount, setCommitCount] = useState(commitment?.commitCount ?? CARE_PLAYBOOKS[role].stages[0].dayCount);
   const [support, setSupport] = useState(commitment?.supportNeeded ?? "");
   const [selected, setSelected] = useState<string | null>(null);
-  const [round, setRound] = useState<CareRound>("BUILD");
+  const [round, setRound] = useState<CareRound>(defaultRound);
   const [moved, setMoved] = useState("");
   const [stuck, setStuck] = useState("");
   const [need, setNeed] = useState("");
@@ -164,6 +173,19 @@ export function MovementCare() {
   const startDay = () => {
     commit({ role, goal, commitCount: Math.max(1, commitCount), supportNeeded: support.trim(), closingPropertyIds: aimProperties });
     toast.success(`${goal} result committed for today`);
+    
+    // Save to D1 backend in parallel
+    import("@/lib/api").then(({ api }) => {
+      api.movementCare.saveCommitment({
+        id: `com-${Date.now()}`,
+        date: new Date().toISOString().slice(0, 10),
+        operator_name: me.name,
+        role,
+        goal,
+        commit_count: Math.max(1, commitCount),
+        support_needed: support.trim(),
+      });
+    });
   };
 
   const createManualLead = (input: NewLeadInput) => {
@@ -653,6 +675,15 @@ function CommitmentGate({ role, goal, commitCount, support, aimProperties, onAim
     `${option.name} ${option.area}`.toLowerCase().includes(query.trim().toLowerCase())).slice(0, 12);
   const playbook = CARE_PLAYBOOKS[role];
   const active = playbook.stages.find((item) => item.goal === goal) ?? playbook.stages[0];
+  
+  const yesterday = useMemo(() => {
+    const d = new Date();
+    d.setDate(d.getDate() - 1);
+    const yStr = d.toISOString().slice(0, 10);
+    const reports = useMovementCare.getState().reports;
+    return reports.filter((r) => r.date === yStr).pop();
+  }, []);
+
   return (
     <div className="min-h-0 flex-1 overflow-y-auto p-3">
       <div className="mx-auto max-w-5xl border bg-card">
@@ -709,11 +740,19 @@ function CommitmentGate({ role, goal, commitCount, support, aimProperties, onAim
             </div>
             <Button onClick={onStart} className="w-full sm:w-auto"><Flag className="h-4 w-4" /> Commit this result and open drafts</Button>
           </div>
-          <div className="border bg-muted/30 p-3">
-            <p className="text-[10px] font-semibold uppercase text-muted-foreground">Your contract</p>
-            <p className="mt-2 text-sm font-semibold">I will deliver {commitCount} {active.unit} today.</p>
-            <p className="mt-2 text-xs text-muted-foreground">{active.outcome}</p>
-            <ol className="mt-3 space-y-1 text-[11px]">
+          <div className="space-y-4 border bg-muted/30 p-3">
+            {yesterday && (
+              <div className="rounded border border-primary/20 bg-primary/5 p-2">
+                <p className="text-[10px] font-semibold uppercase text-primary">Yesterday's Result</p>
+                <p className="mt-1 text-xs">{yesterday.actual} {yesterday.goal} delivered (committed {yesterday.committed})</p>
+                <p className="text-[10px] text-muted-foreground">Anchor today's commitment based on this.</p>
+              </div>
+            )}
+            <div>
+              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Your contract</p>
+              <p className="mt-2 text-sm font-semibold">I will deliver {commitCount} {active.unit} today.</p>
+              <p className="mt-2 text-xs text-muted-foreground">{active.outcome}</p>
+              <ol className="mt-3 space-y-1 text-[11px]">
               {active.steps.map((step, index) => (
                 <li key={step} className="flex gap-1.5"><span className="font-mono text-muted-foreground">{index + 1}.</span>{step}</li>
               ))}
@@ -725,6 +764,7 @@ function CommitmentGate({ role, goal, commitCount, support, aimProperties, onAim
               <div><dt className="text-muted-foreground">Required when</dt><dd>{active.requireWhen}</dd></div>
               <div><dt className="text-muted-foreground">Closing these properties</dt><dd>{aimProperties.length ? aimProperties.map((id) => propertyOptions.find((option) => option.id === id)?.name).join(", ") : "Not chosen yet"}</dd></div>
             </dl>
+          </div>
           </div>
         </div>
       </div>
@@ -837,20 +877,16 @@ function DebriefCard({ code, customer, onSave, onCopy, onPreview, onClose }: {
           <Textarea value={problems} onChange={(event) => setProblems(event.target.value)} placeholder="Need inventory truth for Salarpuria, need pricing approval…" className="mt-1 min-h-14 text-xs" />
         </label>
       </div>
-      <div className="mt-2 border bg-muted/30 p-2">
+      <div className="mt-2 border bg-muted/30 p-2 relative">
         <p className="text-[10px] font-semibold uppercase text-muted-foreground">WhatsApp message being written — live</p>
         <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-snug">{onPreview({ done, wentWell, wentBadly, problems })}</pre>
+        {saved && (
+           <Button size="sm" variant="secondary" className="absolute top-2 right-2 h-7 text-[10px]" onClick={() => onCopy(saved.id, saved.message)}>
+             <ClipboardCopy className="mr-1 h-3.5 w-3.5" /> Copy for WhatsApp
+           </Button>
+        )}
       </div>
-      <Button size="sm" className="mt-2" onClick={build}><CheckCircle2 className="h-3.5 w-3.5" /> Make the WhatsApp update</Button>
-      {saved && (
-        <div className="mt-2 border bg-muted/30 p-2">
-          <p className="text-[10px] font-semibold uppercase text-muted-foreground">Copy this and paste it in the team WhatsApp group</p>
-          <pre className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-snug">{saved.message}</pre>
-          <Button size="sm" className="mt-2" onClick={() => onCopy(saved.id, saved.message)}>
-            <ClipboardCopy className="h-3.5 w-3.5" /> Copy for WhatsApp
-          </Button>
-        </div>
-      )}
+      <Button size="sm" className="mt-2" onClick={build}><CheckCircle2 className="h-3.5 w-3.5" /> Save and Make WhatsApp update</Button>
     </div>
   );
 }

@@ -1,6 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Button } from "@/components/ui/button";
+import { CheckCircle2 } from "lucide-react";
+import { toast } from "sonner";
 import {
   Select, SelectContent, SelectItem, SelectTrigger, SelectValue,
 } from "@/components/ui/select";
@@ -41,7 +44,7 @@ export interface CallMovementResult {
 export function useCallMovement(lead: Lead, call: CallNumber): CallMovementResult {
   const {
     properties, tours, currentTcmId,
-    scheduleTour, completeTour, closeDeal, patchLead, addLeadTag, sendMessage,
+    scheduleTour, completeTour, closeDeal, patchLead, addLeadTag, sendMessage, setLeadStage,
   } = useApp();
   const setField = useLeadDossier((s) => s.setField);
 
@@ -309,13 +312,26 @@ export function useCallMovement(lead: Lead, call: CallNumber): CallMovementResul
     );
   } else {
     node = (
-      <div className="grid grid-cols-2 gap-2">
-        <Field label="New move-in date">
-          <Input type="date" value={reviveDate} onChange={(e) => setReviveDate(e.target.value)} className="h-9 text-sm" />
-        </Field>
-        <Field label="New budget">
-          <Input inputMode="numeric" value={reviveBudget} onChange={(e) => setReviveBudget(e.target.value)} placeholder="13000" className="h-9 text-sm" />
-        </Field>
+      <div className="space-y-4">
+        <div className="grid grid-cols-2 gap-2">
+          <Field label="New move-in date">
+            <Input type="date" value={reviveDate} onChange={(e) => setReviveDate(e.target.value)} className="h-9 text-sm" />
+          </Field>
+          <Field label="New budget">
+            <Input inputMode="numeric" value={reviveBudget} onChange={(e) => setReviveBudget(e.target.value)} placeholder="13000" className="h-9 text-sm" />
+          </Field>
+        </div>
+        <Button 
+          type="button"
+          size="sm" 
+          className="w-full bg-success hover:bg-success/90 text-success-foreground shadow-sm font-semibold" 
+          onClick={() => {
+            setLeadStage(lead.id, "booked");
+            toast.success("Lead marked as Booked!");
+          }}
+        >
+          <CheckCircle2 className="mr-1.5 h-4 w-4" /> Close Deal
+        </Button>
       </div>
     );
   }

@@ -111,7 +111,8 @@ export function SmartWaLayer({ lead }: { lead: Lead }) {
 
   // Multi-property pitch: pick top 2 PGs near lead's area
   const matchedPgs = useMemo(() => {
-    const area = lead.preferredArea.toLowerCase();
+    const area = (lead.preferredArea || "").toLowerCase();
+    if (!area) return PG_LIST.slice(0, 2);
     const filtered = PG_LIST.filter((pg) =>
       pg.area.toLowerCase().includes(area) || area.includes(pg.area.toLowerCase()),
     );

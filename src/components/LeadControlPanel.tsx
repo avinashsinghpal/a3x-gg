@@ -247,7 +247,7 @@ export function LeadControlPanel() {
             <span className="text-[10px] text-muted-foreground shrink-0">confidence</span>
           </div>
           <div className="grid grid-cols-3 gap-2 text-xs">
-            <Meta icon={CalendarIcon} label="Move-in" value={format(new Date(lead.moveInDate), "MMM d")} />
+            <Meta icon={CalendarIcon} label="Move-in" value={lead.moveInDate && !isNaN(new Date(lead.moveInDate).getTime()) ? format(new Date(lead.moveInDate), "MMM d") : lead.moveInDate || "TBD"} />
             <Meta icon={Wallet} label="Budget" value={`₹${(lead.budget / 1000).toFixed(0)}k`} />
             <Meta icon={MapPin} label="Area" value={lead.preferredArea} />
           </div>
@@ -261,6 +261,17 @@ export function LeadControlPanel() {
             >
               <Zap className="mr-1.5 h-4 w-4" /> M-POWER CALL
             </Button>
+            {lead.stage !== "booked" && (
+              <Button 
+                size="sm" 
+                className="h-9 bg-success hover:bg-success/90 text-success-foreground flex-1 min-w-[140px] shadow-sm font-semibold" 
+                onClick={() => {
+                  setLeadStage(lead.id, "booked");
+                }}
+              >
+                <CheckCircle2 className="mr-1.5 h-4 w-4" /> Close Deal
+              </Button>
+            )}
             <Button size="sm" variant="secondary" className="h-8 flex-1 min-w-[140px]" onClick={() => setLogOpen(true)}>
               <ActivityIcon className="mr-1.5 h-3.5 w-3.5" /> + Log activity
             </Button>

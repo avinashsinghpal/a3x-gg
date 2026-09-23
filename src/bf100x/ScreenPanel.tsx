@@ -40,6 +40,7 @@ export function ScreenPanel({
   const { answerStep, editFields } = useBookingFlow();
   const f = lead.f ?? {};
   const [draft, setDraft] = useState<Record<string, string>>({});
+  const [savedField, setSavedField] = useState<string | null>(null);
   const rootRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => setDraft({}), [screen.id, lead.id]);
@@ -53,6 +54,11 @@ export function ScreenPanel({
   const put = (k: string, v: string) => setDraft((s) => ({ ...s, [k]: v }));
 
   const merged = useMemo(() => ({ ...f, ...draft }), [f, draft]);
+
+  function triggerSaved(field: string) {
+    setSavedField(field);
+    setTimeout(() => setSavedField(null), 1500);
+  }
 
   /** Writes one step's answers to the timeline. Returns false if it is half-filled. */
   function commit(st: JStep, source: Record<string, string>, quiet = false) {
@@ -73,19 +79,21 @@ export function ScreenPanel({
     if (Object.keys(payload).length === 0) return true;
     if (isStepDone(f, st)) editFields(lead.id, payload, "corrected on the 100x screen", st.key);
     else answerStep(lead.id, st.key, payload);
+    triggerSaved(st.field);
     return true;
   }
 
   /** Typed answers save themselves — on Enter, or the moment focus leaves the box. */
   function commitTyped(st: JStep) {
-    if (!fieldsOf(st).some((k) => draft[k] !== undefined && draft[k] !== f[k])) return;
+    const v = draft[st.field];
+    if (v === undefined || v === f[st.field]) return;
+    if (v.trim() === "") return;
     if (!commit(st, draft, true)) return;
     setDraft((s) => {
-      const copy = { ...s };
-      fieldsOf(st).forEach((k) => delete copy[k]);
-      return copy;
+      const next = { ...s };
+      delete next[st.field];
+      return next;
     });
-    toast.success(`${st.title} saved`);
   }
 
   /** One click on an option is the answer — save it right away when nothing else is needed. */
@@ -198,6 +206,11 @@ export function ScreenPanel({
                   <span className="text-xs text-muted-foreground">{i + 1}.</span>
                   <p className="text-sm font-medium">{st.question}</p>
                   {done && <Badge className="bg-primary/15 text-[10px] text-primary hover:bg-primary/15"><Check className="mr-1 h-3 w-3" />done</Badge>}
+                  {savedField === st.field && (
+                    <span className="animate-in fade-in zoom-in rounded bg-green-500/15 px-1.5 py-0.5 text-[10px] font-bold text-green-700 duration-200">
+                      Saved ✓
+                    </span>
+                  )}
                   <span className="ml-auto text-[10px] text-muted-foreground">waiting on {st.waitingOn}</span>
                 </div>
                 <p className="mt-0.5 text-xs text-muted-foreground">{st.help}</p>

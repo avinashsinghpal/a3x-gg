@@ -43,6 +43,7 @@ export interface Lead {
   intent: Intent;
   confidence: number; // 0-100 (deal probability)
   tags: string[];
+  dossier?: any; // JSON
   nextFollowUpAt: string | null;
   responseSpeedMins: number; // first response time
   createdAt: string;

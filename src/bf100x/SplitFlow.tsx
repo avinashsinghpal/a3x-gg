@@ -23,6 +23,7 @@ import { ClosingDesk } from "./ClosingDesk";
 import { ContactActions } from "@/components/common/ContactActions";
 import { CloseCommitButton } from "@/components/commitments/CloseCommitButton";
 import { canonicalCustomerId } from "@/lib/canonical/customer-id";
+import { api } from "@/lib/api";
 
 type Pane = "WORK" | "CAPTURED" | "MATCH" | "LABELS" | "CLOSING" | "QUEUE" | "DRAFTS";
 
@@ -71,8 +72,14 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
   const { leads, me, mode, setMode, claim, setNext, logActivity, escalate, batches, buildBatch, closeBatch, reopenBatch } = useBookingFlow();
   const [widthPct, setWidthPct] = useState(40);
   const [dragging, setDragging] = useState(false);
-  const [closeNote, setCloseNote] = useState("");
+  // Structured draft-close fields
   const [closingId, setClosingId] = useState<string | null>(null);
+  const [closeDraftMoved, setCloseDraftMoved] = useState("");
+  const [closeDraftStuck, setCloseDraftStuck] = useState("");
+  const [closeDraftNext, setCloseDraftNext] = useState("");
+  // Closing promise for the right panel — auto-saved to D1
+  const [closingPromise, setClosingPromise] = useState("");
+  const [promiseId] = useState(() => `promise-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
 
   // remember the width the operator picked, like a column width in a sheet
   useEffect(() => {
@@ -102,6 +109,7 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
   const [activityType, setActivityType] = useState("Call completed");
   const [activityNote, setActivityNote] = useState("");
   useEffect(() => setMounted(true), []);
+
 
   // the queue: everyone who still needs a decision, worst first
   const queue = useMemo(() => {
@@ -162,10 +170,51 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
     if (n >= 0 && n < SCREENS.length) setScreenId(SCREENS[n]!.id);
   }
 
+  // Keyboard navigation: Ctrl+← / Ctrl+→ to move between screens
+  useEffect(() => {
+    const handler = (e: KeyboardEvent) => {
+      if (!e.ctrlKey) return;
+      if (e.key === "ArrowRight") { e.preventDefault(); step(1); }
+      if (e.key === "ArrowLeft") { e.preventDefault(); step(-1); }
+    };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [idx]);
+
   function nextCustomer() {
     const i = queue.findIndex((l) => l.id === lead?.id);
     const pick = queue[i + 1] ?? queue[0];
     if (pick) setLeadId(pick.id);
+  }
+
+  // Smart-suggest nextAction from the current screen title
+  function suggestNextAction(screenTitle: string): string {
+    const t = screenTitle.toLowerCase();
+    if (t.includes("tour")) return "Confirm tour attendance";
+    if (t.includes("price") || t.includes("commercial")) return "Follow up on price decision";
+    if (t.includes("book") || t.includes("clos")) return "Collect booking amount";
+    if (t.includes("check") || t.includes("move")) return "Coordinate check-in";
+    return NEXT_ACTIONS[0] ?? "Follow up";
+  }
+
+  // Smart-suggest nextAction when screen changes
+  useEffect(() => {
+    const screen = SCREENS.find((s) => s.id === screenId) ?? (lead ? currentScreen(lead.f ?? {}) : SCREENS[0]!);
+    setNextAction(suggestNextAction(screen.title));
+  }, [screenId, lead?.id]);
+
+  // Save closing promise to D1 backend (fire-and-forget, local state is truth)
+  function saveClosingPromise(promise: string) {
+    if (!lead || !promise.trim()) return;
+    void api.bookingFlow.savePromise({
+      id: promiseId,
+      lead_id: lead.id,
+      lead_name: lead.name,
+      operator_name: me,
+      promise,
+      next_step: nextAction,
+      deadline: due,
+    });
   }
 
   return (
@@ -464,21 +513,41 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
 
       <Dialog open={!!closingId} onOpenChange={(o) => !o && setClosingId(null)}>
         <DialogContent className="max-w-sm">
-          <DialogHeader><DialogTitle>Close this draft</DialogTitle></DialogHeader>
-          <label className="block text-xs font-medium">
-            What happened in this draft?
-            <Input className="mt-1" autoFocus placeholder="30 customers worked, 6 tours set…" value={closeNote} onChange={(e) => setCloseNote(e.target.value)} />
-          </label>
+          <DialogHeader><DialogTitle>Close this draft — what happened?</DialogTitle></DialogHeader>
+          <div className="space-y-3">
+            <label className="block text-xs font-medium">
+              Customers moved (number)
+              <Input type="number" min={0} className="mt-1" autoFocus placeholder="e.g. 8" value={closeDraftMoved} onChange={(e) => setCloseDraftMoved(e.target.value)} />
+            </label>
+            <label className="block text-xs font-medium">
+              What got stuck or blocked
+              <Input className="mt-1" placeholder="e.g. 3 customers didn't answer, pricing unclear" value={closeDraftStuck} onChange={(e) => setCloseDraftStuck(e.target.value)} />
+            </label>
+            <label className="block text-xs font-medium">
+              Next step for this batch
+              <Input className="mt-1" placeholder="e.g. Re-call no-answers after 5 PM" value={closeDraftNext} onChange={(e) => setCloseDraftNext(e.target.value)} />
+            </label>
+          </div>
           <DialogFooter>
             <Button variant="outline" onClick={() => setClosingId(null)}>Cancel</Button>
-            <Button onClick={() => { if (closingId) closeBatch(closingId, closeNote); setClosingId(null); toast.success("Draft closed"); }}>Close draft</Button>
+            <Button onClick={() => {
+              if (closingId) {
+                const note = `Moved: ${closeDraftMoved || "?"} · Stuck: ${closeDraftStuck || "none"} · Next: ${closeDraftNext || "—"}`;
+                closeBatch(closingId, note);
+              }
+              setClosingId(null);
+              setCloseDraftMoved("");
+              setCloseDraftStuck("");
+              setCloseDraftNext("");
+              toast.success("Draft closed and recorded");
+            }}>Close draft</Button>
           </DialogFooter>
         </DialogContent>
       </Dialog>
     </div>
 
 
-      {/* Drag this edge to set the panel width, exactly like a sheet column */}
+      {/* Drag handle + right panel */}
       {!panelOnly && widthPct < 100 && (
         <>
           <div
@@ -487,9 +556,47 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
             onPointerDown={() => setDragging(true)}
             className={cn("w-1.5 shrink-0 cursor-col-resize bg-border transition-colors hover:bg-primary", dragging && "bg-primary")}
           />
-          <div className="flex min-w-0 flex-1 items-center justify-center bg-muted/30 p-4 text-center">
-            <p className="text-[11px] text-muted-foreground">
-              Keep WhatsApp Web open in this space.<br />Drag the grey bar, or use the width buttons, to set the sizes you want.
+          {/* Closing Promise panel — replaces the dead placeholder */}
+          <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto bg-muted/20 p-4">
+            <div className="rounded-md border bg-card p-3">
+              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Closing promise · {lead?.name ?? "no customer selected"}</p>
+              <p className="mt-0.5 text-[10px] text-muted-foreground">Type the one line you will deliver. It saves to the database when you tab out.</p>
+              <textarea
+                rows={3}
+                className="mt-2 w-full resize-none rounded-md border bg-background p-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
+                placeholder="e.g. I will send the tour confirmation by 6 PM today and call to confirm attendance."
+                value={closingPromise}
+                onChange={(e) => setClosingPromise(e.target.value)}
+                onBlur={(e) => saveClosingPromise(e.target.value)}
+              />
+              {closingPromise.trim() && (
+                <button
+                  type="button"
+                  className="mt-1.5 w-full rounded-md border bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
+                  onClick={() => {
+                    navigator.clipboard.writeText(
+                      `Promise: ${closingPromise}\nNext step: ${nextAction}\nDeadline: ${new Date(due).toLocaleString()}`
+                    ).then(() => {
+                      if (lead) void api.bookingFlow.markCopied(promiseId);
+                    });
+                  }}
+                >
+                  Copy closing promise for WhatsApp
+                </button>
+              )}
+            </div>
+            <div className="rounded-md border bg-card p-3">
+              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Next step + deadline</p>
+              <p className="mt-1 text-xs font-medium">{nextAction}</p>
+              <p className="text-[10px] text-muted-foreground">{mounted ? new Date(due).toLocaleString() : ""}</p>
+              {stats.late > 0 && (
+                <p className="mt-1 rounded bg-destructive/10 px-2 py-1 text-[10px] font-semibold text-destructive">
+                  {stats.late} customer{stats.late > 1 ? "s" : ""} overdue — open All customers tab
+                </p>
+              )}
+            </div>
+            <p className="text-center text-[10px] text-muted-foreground">
+              Keep WhatsApp Web open here · Ctrl+← / Ctrl+→ to move screens
             </p>
           </div>
         </>

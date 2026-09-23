@@ -1,6 +1,6 @@
 // Call Conversation Engine — mission → call → agenda screen → three outputs.
 // The operator never types a message and never decides the next step alone.
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Badge } from "@/components/ui/badge";
@@ -8,6 +8,7 @@ import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Separator } from "@/components/ui/separator";
 import { cn } from "@/lib/utils";
+import { useApp } from "@/lib/store";
 import { useMovement } from "@/movement/store";
 import { NEXT_ACTION_LABEL, type MovementState } from "@/movement/types";
 import { rankedForCustomer } from "@/movement-care/properties";
@@ -15,7 +16,7 @@ import { buildOutputs, wasteFlags } from "./compose";
 import { knownFacts, noAnswerPlan, suggestAgenda } from "./infer";
 import { callMission } from "./mission";
 import { useCallEngine } from "./store";
-import { pushCallRecord } from "./sync";
+import { fetchLeadCallHistory, pushCallRecord, pushCallRecordToApi } from "./sync";
 import {
   ACTIVITIES, AGENDAS, DISLIKE_REASONS, MOVEMENT_LABEL, OUTCOMES, PRICE_REACTIONS, PROMISES, REACTIONS,
   TOUR_REFUSALS, agendaDef, emptyCapture,
@@ -45,6 +46,8 @@ interface Props {
 
 export function CallEngine({ lead, onLogged }: Props) {
   const mv = useMovement();
+  const patchLead = useApp((s) => s.patchLead);
+  const setLeadStage = useApp((s) => s.setLeadStage);
   const engine = useCallEngine();
 
   const suggestion = useMemo(() => suggestAgenda(lead), [lead]);
@@ -57,9 +60,16 @@ export function CallEngine({ lead, onLogged }: Props) {
   const [outputs, setOutputs] = useState<CallOutputs | null>(null);
   const [nowText, setNowText] = useState("");
   const [followText, setFollowText] = useState("");
+  const [syncStatus, setSyncStatus] = useState<"idle" | "syncing" | "synced" | "local">("idle");
+  const [history, setHistory] = useState<{ id: string; called_at: string; agenda: string; outcome: string; movement: string | null; message_now: string | null }[]>([]);
 
   const facts = useMemo(() => knownFacts(lead), [lead]);
   const def = agendaDef(agenda);
+
+  // Load last 3 call records for this lead from the D1 backend
+  useEffect(() => {
+    fetchLeadCallHistory(lead.ulid).then((records) => setHistory(records.slice(0, 3))).catch(() => {});
+  }, [lead.ulid]);
   const attempt = engine.noAnswerStreak(lead.ulid) + 1;
   const plan = useMemo(() => noAnswerPlan(lead, attempt), [lead, attempt]);
   const nextPlan = useMemo(() => noAnswerPlan(lead, attempt + 1), [lead, attempt]);
@@ -153,8 +163,40 @@ export function CallEngine({ lead, onLogged }: Props) {
     } as CallRecord;
 
     engine.save(record);
-    void pushCallRecord(record).then((res) => {
-      if (!res.ok) toast.warning(`Saved on this device — not synced yet: ${res.error}`);
+
+    // Apply the captured details to the MovementOS state
+    mv.logCall(lead.ulid, outcome, cap.note || undefined);
+    mv.capture(lead.ulid, cap);
+    if (outputs.movement) mv.patch(lead.ulid, { movement: outputs.movement });
+    if (outputs.nextStep) mv.setNextAction(lead.ulid, outputs.nextStep);
+
+    // Also update the main CRM leads list (/leads endpoint) with new basic details and full dossier
+    patchLead(lead.ulid, {
+      budget: cap.budget ?? lead.budget ?? undefined,
+      moveInDate: cap.moveIn ?? lead.moveInDate ?? undefined,
+      preferredArea: cap.area ?? lead.preferredArea ?? undefined,
+      dossier: { ...lead.dossier, ...cap },
+    });
+    
+    // Automatically advance the stage based on movement/outcome
+    if (outputs.movement === "dropped") {
+      setLeadStage(lead.ulid, "dropped");
+    } else if (outputs.movement === "booking") {
+      setLeadStage(lead.ulid, "negotiation");
+    } else if (outputs.movement === "tour-booked") {
+      setLeadStage(lead.ulid, "tour-scheduled");
+    } else if (lead.stage === "new" && outcome !== "no-answer") {
+      setLeadStage(lead.ulid, "contacted");
+    }
+
+    setSyncStatus("syncing");
+    // Dual-write: Supabase (primary) + D1/Render (secondary) in parallel
+    void Promise.all([
+      pushCallRecord(record),
+      pushCallRecordToApi(record),
+    ]).then(([supaRes, apiRes]) => {
+      if (supaRes.ok || apiRes.ok) setSyncStatus("synced");
+      else setSyncStatus("local");
     });
 
     toast.success(`${def.label} logged · ${MOVEMENT_LABEL[outputs.movement]} · next: ${outputs.nextStep.label}`);
@@ -179,12 +221,20 @@ export function CallEngine({ lead, onLogged }: Props) {
             <div className="truncate text-sm font-semibold">{lead.name ?? "Customer"}</div>
             <div className="text-[10px] text-muted-foreground">M-POWER CALL · {def.label}</div>
           </div>
-          {lead.nextAction && (
-            <Badge variant="outline" className="shrink-0 text-[10px]">
-              next: {NEXT_ACTION_LABEL[lead.nextAction.kind]} ·{" "}
-              {new Date(lead.nextAction.dueAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
-            </Badge>
-          )}
+          <div className="flex shrink-0 items-center gap-1.5">
+            {syncStatus === "synced" && <span className="rounded bg-green-500/10 px-1.5 py-0.5 text-[9px] font-medium text-green-600">Synced ✓</span>}
+            {syncStatus === "local" && <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-600">Saved locally ⚠</span>}
+            {syncStatus === "syncing" && <span className="rounded bg-muted px-1.5 py-0.5 text-[9px] text-muted-foreground">Syncing…</span>}
+            {lead.nextAction && (() => {
+              const overdue = new Date(lead.nextAction.dueAt) < new Date();
+              return (
+                <Badge variant="outline" className={cn("shrink-0 text-[10px]", overdue && "border-destructive text-destructive")}>
+                  {overdue ? "OVERDUE" : "next"}: {NEXT_ACTION_LABEL[lead.nextAction.kind]} · {lead.nextAction.ownerName ?? ""} ·{" "}
+                  {new Date(lead.nextAction.dueAt).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
+                </Badge>
+              );
+            })()}
+          </div>
         </div>
         <div className="grid grid-cols-2 gap-x-3 gap-y-0.5">
           {facts.map((f) => (
@@ -445,7 +495,16 @@ export function CallEngine({ lead, onLogged }: Props) {
             <div className="space-y-2 rounded-md border bg-muted/40 p-2.5">
               <div className="text-xs font-semibold">{plan.title} · attempt #{plan.attempt}</div>
               <div className="text-[11px] text-muted-foreground">Condition {plan.condition} — approved message, sent exactly as written.</div>
-              <div className="rounded border bg-background p-2 text-[11px] whitespace-pre-wrap">{plan.ask}</div>
+              <div className="relative rounded border bg-background p-2 text-[11px] whitespace-pre-wrap">
+                {plan.ask}
+                <button
+                  type="button"
+                  onClick={() => navigator.clipboard.writeText(plan.ask).then(() => toast.success("Copied — paste into WhatsApp"))}
+                  className="absolute right-1.5 top-1.5 rounded border bg-muted px-1.5 py-0.5 text-[9px] hover:bg-accent"
+                >
+                  Copy
+                </button>
+              </div>
               <div className="text-[10px] text-muted-foreground">Next attempt if still silent: {nextPlan.ask}</div>
               <div className="flex flex-wrap gap-1">
                 {plan.options.map((o) => (
@@ -466,7 +525,14 @@ export function CallEngine({ lead, onLogged }: Props) {
             </div>
           </div>
 
-          <Textarea rows={2} className="text-xs" placeholder="Anything the customer said that the fields don't cover" value={cap.note ?? ""} onChange={(e) => set({ note: e.target.value })} />
+          <Textarea
+            rows={2}
+            className="text-xs"
+            placeholder="Anything the customer said that the fields don't cover — press Enter to finish"
+            value={cap.note ?? ""}
+            onChange={(e) => set({ note: e.target.value })}
+            onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); finish(outcome); } }}
+          />
           <Button className="w-full" onClick={() => finish(outcome)}>End call · build message, follow-up and next step</Button>
         </>
       )}
@@ -474,6 +540,11 @@ export function CallEngine({ lead, onLogged }: Props) {
       {phase === "outputs" && outputs && (
         <>
           <Separator />
+          {/* Outcome result banner — what this call produced in one line */}
+          <div className="rounded-md border border-primary/30 bg-primary/5 px-3 py-2">
+            <div className="text-xs font-bold text-primary">{MOVEMENT_LABEL[outputs.movement]} produced by this call</div>
+            <div className="text-[10px] text-muted-foreground">{def.label} · {outcome} · next step due {new Date(outputs.nextStep.dueAt).toLocaleString([], { day: "numeric", month: "short", hour: "numeric", minute: "2-digit" })}</div>
+          </div>
           <div className="flex items-center gap-2">
             <Badge className="text-[10px]">{MOVEMENT_LABEL[outputs.movement]}</Badge>
             <span className="text-[11px] text-muted-foreground">{def.label} · {outcome}</span>
@@ -507,6 +578,25 @@ export function CallEngine({ lead, onLogged }: Props) {
             <Button className="flex-1" size="sm" onClick={commit}>Send, arm follow-up and set next step</Button>
           </div>
         </>
+      )}
+
+      {/* Inline call history — last 3 calls for this lead, always visible in mission phase */}
+      {phase === "mission" && history.length > 0 && (
+        <div className="space-y-1">
+          <Title>Previous calls for {lead.name ?? "this customer"}</Title>
+          {history.map((h) => (
+            <div key={h.id} className="rounded border bg-muted/30 px-2 py-1.5">
+              <div className="flex items-center justify-between gap-2">
+                <span className="text-[10px] font-semibold">{h.agenda} · {h.outcome}</span>
+                <span className="text-[9px] text-muted-foreground">{new Date(h.called_at).toLocaleDateString("en-IN", { day: "numeric", month: "short", hour: "2-digit", minute: "2-digit" })}</span>
+              </div>
+              {h.movement && <div className="text-[9px] text-muted-foreground">{h.movement}</div>}
+              {h.message_now && (
+                <div className="mt-0.5 truncate text-[9px] text-muted-foreground">"{h.message_now.slice(0, 80)}…"</div>
+              )}
+            </div>
+          ))}
+        </div>
       )}
     </div>
   );

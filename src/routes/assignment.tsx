@@ -116,7 +116,7 @@ const timeline = [
   { when: "Final hour", what: "Regression pass on everything you didn't touch, write the note, send the link." },
 ];
 
-export default function AssignmentPage() {
+function AssignmentPage() {
   return (
     <div className="min-h-screen bg-background text-foreground">
       <div className="mx-auto max-w-4xl px-5 py-10 space-y-12">

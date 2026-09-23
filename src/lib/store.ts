@@ -9,6 +9,7 @@ import { autoAssign as autoAssignFn } from "./routing";
 import { pushObjectionToOwner, pushTourViewToOwner } from "@/owner/team-bridge";
 import { emit as emitConnector } from "./connectors";
 import { personName } from "./people";
+import { api } from "./api";
 
 const uid = (p: string) => `${p}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -64,6 +65,7 @@ interface AppState {
   advanceSequenceStep: (leadId: string) => void;
 
   closeDeal: (input: { leadId: string; tourId: string; propertyId: string; tcmId: string; amount: number }) => void;
+  initCrm: () => Promise<void>;
 }
 
 export const useApp = create<AppState>((set, get) => ({
@@ -85,12 +87,95 @@ export const useApp = create<AppState>((set, get) => ({
   sequences: SEQUENCES_INIT,
   bookings: [],
 
+  initCrm: async () => {
+    try {
+      const [leadsRes, toursRes, activitiesRes] = await Promise.all([
+        api.crm.getLeads(),
+        api.crm.getTours(),
+        api.crm.getActivities()
+      ]);
+      set((s) => {
+        let newLeads = s.leads;
+        if (leadsRes.ok) {
+          const rawLeads = (leadsRes.data as any).leads || [];
+          newLeads = rawLeads.map((r: any) => {
+            let parsedTags = [];
+            let parsedDossier = undefined;
+            try { if (r.tags) parsedTags = JSON.parse(r.tags); } catch (e) {}
+            try { if (r.dossier) parsedDossier = JSON.parse(r.dossier); } catch (e) {}
+            
+            return {
+              id: r.id,
+              ulid: r.ulid,
+              name: r.name,
+              phone: r.phone,
+              email: r.email,
+              stage: r.stage,
+              intent: r.intent,
+              budget: r.budget,
+              moveInDate: r.move_in_date,
+              preferredArea: r.preferred_area,
+              assignedTcmId: r.assignee_id || r.assigned_tcm_id,
+              assigneeName: r.assignee_name,
+              confidence: r.confidence || 50,
+              tags: parsedTags,
+              dossier: parsedDossier,
+              createdAt: r.created_at,
+              updatedAt: r.updated_at
+            };
+          });
+        }
+        let newTours = s.tours;
+        if (toursRes.ok) {
+          const rawTours = (toursRes.data as any).tours || [];
+          newTours = rawTours.map((t: any) => {
+            let parsedPostTour = { filledAt: "", bookingProbability: 50, intent: "cold", nextStep: "" };
+            try { if (t.post_tour_feedback) parsedPostTour = JSON.parse(t.post_tour_feedback); } catch (e) {}
+            return {
+              id: t.id,
+              leadId: t.lead_id,
+              propertyId: t.property_id,
+              tcmId: t.tcm_id,
+              scheduledAt: t.scheduled_at,
+              status: t.status,
+              decision: t.decision,
+              postTour: parsedPostTour
+            };
+          });
+        }
+        
+        let newActivities = s.activities;
+        if (activitiesRes.ok) {
+          const rawActivities = (activitiesRes.data as any).activities || [];
+          newActivities = rawActivities.map((a: any) => ({
+            id: a.id,
+            leadId: a.lead_id,
+            type: a.type,
+            text: a.text,
+            actorId: a.actor_id,
+            actorName: a.actor_name,
+            ts: a.ts
+          }));
+        }
+
+        return {
+          leads: newLeads,
+          tours: newTours,
+          activities: newActivities,
+        };
+      });
+    } catch (e) {
+      console.error("Failed to initialize CRM from backend", e);
+    }
+  },
+
   patchLead: (leadId, patch) => {
     set((s) => ({
       leads: s.leads.map((l) =>
         l.id === leadId ? { ...l, ...patch, updatedAt: new Date().toISOString() } : l,
       ),
     }));
+    void api.crm.updateLead(leadId, patch);
   },
 
   setLeadStage: (leadId, stage) => {
@@ -99,6 +184,7 @@ export const useApp = create<AppState>((set, get) => ({
         l.id === leadId ? { ...l, stage, updatedAt: new Date().toISOString() } : l,
       ),
     }));
+    void api.crm.updateLead(leadId, { stage });
     pushActivity(set, get, {
       kind: "status_changed", actor: get().role, leadId,
       text: `Status changed to ${stage}`,
