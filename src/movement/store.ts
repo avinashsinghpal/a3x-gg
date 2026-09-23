@@ -233,7 +233,21 @@ export const movementCreator: StateCreator<MovementStore> = (set, get) => ({
   patch: (ulid, p) =>
     set((s) => {
       const cur = s.states[ulid] ?? blank({ ulid });
-      return { states: { ...s.states, [ulid]: { ...cur, ...p, updatedAt: now() } } };
+      const newState = { ...cur, ...p, updatedAt: now() };
+      
+      import("@/lib/api").then(({ api }) => {
+        api.crm.updateMovementState(ulid, {
+          wa_account: newState.waAccount,
+          work_state: newState.work,
+          stage: newState.stage,
+          movement: newState.identity,
+          next_action: newState.nextAction,
+          drafting_batch: newState.crmDraft?.batchId,
+          payload: newState,
+        });
+      });
+
+      return { states: { ...s.states, [ulid]: newState } };
     }),
 
   toggleSelect: (ulid) =>

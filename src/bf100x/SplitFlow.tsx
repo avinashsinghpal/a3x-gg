@@ -569,10 +569,30 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
                 onChange={(e) => setClosingPromise(e.target.value)}
                 onBlur={(e) => saveClosingPromise(e.target.value)}
               />
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {[
+                  "Tour completed, decision pending",
+                  "Quote sent, waiting for payment",
+                  "Customer requested callback tomorrow",
+                  "Property booked, initiating check-in"
+                ].map(action => (
+                  <button
+                    key={action}
+                    type="button"
+                    className="rounded border bg-accent/50 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
+                    onClick={() => {
+                      setClosingPromise(action);
+                      saveClosingPromise(action);
+                    }}
+                  >
+                    {action}
+                  </button>
+                ))}
+              </div>
               {closingPromise.trim() && (
                 <button
                   type="button"
-                  className="mt-1.5 w-full rounded-md border bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
+                  className="mt-2 w-full rounded-md border bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
                   onClick={() => {
                     navigator.clipboard.writeText(
                       `Promise: ${closingPromise}\nNext step: ${nextAction}\nDeadline: ${new Date(due).toLocaleString()}`

@@ -274,6 +274,25 @@ export function MovementCare() {
       ...input,
     });
     mv.log(selectedState.ulid, "note", `${debriefFor.code} wrap-up · done: ${input.done || "—"} · well: ${input.wentWell || "—"} · badly: ${input.wentBadly || "—"} · problem: ${input.problems || "none"}`);
+    
+    // Sync to backend
+    import("@/lib/api").then(({ api }) => {
+      api.movementCare.saveDebrief({
+        id: saved.id,
+        date: saved.date,
+        ulid: saved.ulid,
+        customer_name: saved.customerName,
+        draft_code: saved.draftCode,
+        goal: saved.goal,
+        done: saved.done,
+        went_well: saved.wentWell,
+        went_badly: saved.wentBadly,
+        problems: saved.problems,
+        message: saved.message,
+        sent_on_whatsapp: false,
+      });
+    });
+
     return saved;
   };
 
@@ -326,7 +345,7 @@ export function MovementCare() {
 
   const saveReport = () => {
     if (!commitment) return;
-    report({
+    const rep = report({
       round,
       role: commitment.role,
       goal: commitment.goal,
@@ -349,6 +368,24 @@ export function MovementCare() {
     setStuck("");
     setNeed("");
     toast.success(`${ROUND_COPY[round].label} progress reported`);
+
+    // Sync to backend
+    import("@/lib/api").then(({ api }) => {
+      api.movementCare.saveReport({
+        id: rep.id,
+        date: rep.date,
+        operator_id: mv.actor.id,
+        operator_name: mv.actor.name,
+        role: rep.role,
+        goal: rep.goal,
+        round: rep.round,
+        actual: rep.actual,
+        commit_count: rep.committed,
+        moved: rep.moved,
+        stuck: rep.stuck,
+        need: rep.need,
+      });
+    });
   };
 
   return (
@@ -448,13 +485,15 @@ export function MovementCare() {
               {queue.map((item, index) => {
                 const info = nameOf.get(item.ulid);
                 const status = resultStatus(item.state);
+                const isOverdue = item.state.nextAction && new Date(item.state.nextAction.dueAt).getTime() < Date.now();
                 return (
                   <Button key={item.ulid} variant="ghost" onClick={() => setSelected(item.ulid)}
                     className={cn("h-auto w-full justify-start rounded-none px-3 py-2 text-left", selected === item.ulid && "bg-primary/10")}>
                     <span className="w-5 shrink-0 font-mono text-[10px] text-muted-foreground">{index + 1}</span>
                     <span className="min-w-0 flex-1">
                       <span className="flex items-center gap-1.5">
-                        <span className="truncate text-xs font-semibold">{info?.name ?? item.ulid}</span>
+                        <span className={cn("truncate text-xs font-semibold", isOverdue && "text-destructive")}>{info?.name ?? item.ulid}</span>
+                        {isOverdue && <AlertTriangle className="h-3 w-3 text-destructive" />}
                         <DraftChip code={item.state.crmDraft} />
                       </span>
                       <span className="block truncate text-[10px] font-normal text-muted-foreground">
@@ -561,10 +600,29 @@ export function MovementCare() {
                   </div>
                 </div>
 
-                {debriefFor?.ulid === selectedState.ulid && (
-                  <DebriefCard code={debriefFor.code} customer={nameOf.get(selectedState.ulid)?.name ?? selectedState.ulid}
-                    onSave={finishDebrief} onCopy={copyMessage} onPreview={previewMessage} onClose={() => setDebriefFor(null)} />
-                )}
+                {debriefFor?.ulid === selectedState.ulid && (() => {
+                  let done = "";
+                  let wentWell = "";
+                  
+                  const recentCall = mv.events.find(e => e.ulid === selectedState.ulid && e.kind === "call" && e.ts > (commitment?.committedAt ?? ""));
+                  if (recentCall) {
+                    done = recentCall.text.includes("connected") ? "Called and connected" : "Called, did not connect";
+                    if (recentCall.text.includes("connected")) wentWell = "Customer answered";
+                  }
+                  
+                  if (selectedState.tourProperty) {
+                    done += done ? `, aimed ${selectedState.tourProperty}` : `Aimed ${selectedState.tourProperty}`;
+                    wentWell = `Pitched ${selectedState.tourProperty}`;
+                  }
+                  
+                  const debriefPrefill = { done, wentWell, wentBadly: "", problems: "" };
+
+                  return (
+                    <DebriefCard code={debriefFor.code} customer={nameOf.get(selectedState.ulid)?.name ?? selectedState.ulid}
+                      prefill={debriefPrefill}
+                      onSave={finishDebrief} onCopy={copyMessage} onPreview={previewMessage} onClose={() => setDebriefFor(null)} />
+                  );
+                })()}
 
                 <WorkPanel ulid={selected} meta={nameOf} />
               </div>
@@ -838,18 +896,27 @@ function PlaybookDrawer({ playbook, onClose }: { playbook: (typeof CARE_PLAYBOOK
   );
 }
 
-function DebriefCard({ code, customer, onSave, onCopy, onPreview, onClose }: {
+function DebriefCard({ code, customer, prefill, onSave, onCopy, onPreview, onClose }: {
   code: string; customer: string;
+  prefill?: { done?: string; wentWell?: string; wentBadly?: string; problems?: string };
   onPreview: (input: { done: string; wentWell: string; wentBadly: string; problems: string }) => string;
   onSave: (input: { done: string; wentWell: string; wentBadly: string; problems: string }) => { id: string; message: string } | undefined;
   onCopy: (id: string, message: string) => void;
   onClose: () => void;
 }) {
-  const [done, setDone] = useState("");
-  const [wentWell, setWentWell] = useState("");
-  const [wentBadly, setWentBadly] = useState("");
-  const [problems, setProblems] = useState("");
+  const [done, setDone] = useState(prefill?.done ?? "");
+  const [wentWell, setWentWell] = useState(prefill?.wentWell ?? "");
+  const [wentBadly, setWentBadly] = useState(prefill?.wentBadly ?? "");
+  const [problems, setProblems] = useState(prefill?.problems ?? "");
   const [saved, setSaved] = useState<{ id: string; message: string } | null>(null);
+
+  // Update when prefill changes (e.g. they select a property after opening it)
+  useEffect(() => {
+    if (prefill?.done) setDone(prefill.done);
+    if (prefill?.wentWell) setWentWell(prefill.wentWell);
+    if (prefill?.wentBadly) setWentBadly(prefill.wentBadly);
+    if (prefill?.problems) setProblems(prefill.problems);
+  }, [prefill]);
 
   const build = () => {
     const result = onSave({ done, wentWell, wentBadly, problems });

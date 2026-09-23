@@ -96,6 +96,53 @@ movementCareRouter.post('/report', async (c) => {
   }
 });
 
+const DebriefSchema = z.object({
+  id: z.string(),
+  date: z.string(),
+  ulid: z.string(),
+  customer_name: z.string().optional(),
+  draft_code: z.string().optional(),
+  goal: z.string().optional(),
+  done: z.string().optional(),
+  went_well: z.string().optional(),
+  went_badly: z.string().optional(),
+  problems: z.string().optional(),
+  message: z.string().optional(),
+  sent_on_whatsapp: z.boolean().optional().default(false),
+});
+
+// POST /api/movement-care/debrief
+movementCareRouter.post('/debrief', async (c) => {
+  try {
+    const rawBody = await c.req.json();
+    const body = DebriefSchema.parse(rawBody);
+    await c.env.DB.prepare(
+      `INSERT OR REPLACE INTO movement_care_debriefs
+        (id, date, ulid, customer_name, draft_code, goal, done, went_well, went_badly, problems, message, sent_on_whatsapp)
+       VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`
+    )
+      .bind(
+        body.id,
+        body.date,
+        body.ulid,
+        body.customer_name ?? null,
+        body.draft_code ?? null,
+        body.goal ?? null,
+        body.done ?? null,
+        body.went_well ?? null,
+        body.went_badly ?? null,
+        body.problems ?? null,
+        body.message ?? null,
+        body.sent_on_whatsapp ? 1 : 0
+      )
+      .run();
+    return c.json({ ok: true });
+  } catch (err: any) {
+    console.error('[movement-care debrief POST]', err);
+    return c.json({ ok: false, error: String(err) }, 400);
+  }
+});
+
 // GET /api/movement-care?date=YYYY-MM-DD
 movementCareRouter.get('/', async (c) => {
   try {
@@ -105,7 +152,14 @@ movementCareRouter.get('/', async (c) => {
     )
       .bind(date)
       .all();
-    return c.json({ ok: true, logs: results });
+      
+    const { results: debriefs } = await c.env.DB.prepare(
+      `SELECT * FROM movement_care_debriefs WHERE date = ? ORDER BY created_at DESC`
+    )
+      .bind(date)
+      .all();
+      
+    return c.json({ ok: true, logs: results, debriefs });
   } catch (err: any) {
     console.error('[movement-care GET]', err);
     return c.json({ ok: false, error: String(err) }, 500);

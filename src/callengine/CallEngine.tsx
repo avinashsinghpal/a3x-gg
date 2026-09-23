@@ -525,15 +525,41 @@ export function CallEngine({ lead, onLogged }: Props) {
             </div>
           </div>
 
+          <div>
+            <Title>Quick Actions</Title>
+            <div className="mt-1 flex flex-wrap gap-1.5">
+              {[
+                "Customer agreed to tour",
+                "Customer pushed to next week",
+                "Customer hung up",
+                "Needs to discuss with family",
+                "Budget is too low",
+                "Wants closer to office"
+              ].map(action => (
+                <button
+                  key={action}
+                  type="button"
+                  className="rounded border bg-accent/50 px-2 py-1 text-[11px] text-muted-foreground hover:bg-accent hover:text-foreground"
+                  onClick={() => {
+                    set({ note: action });
+                    finish(outcome);
+                  }}
+                >
+                  {action}
+                </button>
+              ))}
+            </div>
+          </div>
+
           <Textarea
             rows={2}
-            className="text-xs"
+            className="mt-3 text-xs"
             placeholder="Anything the customer said that the fields don't cover — press Enter to finish"
             value={cap.note ?? ""}
             onChange={(e) => set({ note: e.target.value })}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); finish(outcome); } }}
           />
-          <Button className="w-full" onClick={() => finish(outcome)}>End call · build message, follow-up and next step</Button>
+          <Button className="mt-2 w-full" onClick={() => finish(outcome)}>End call · build message, follow-up and next step</Button>
         </>
       )}
 

@@ -51,6 +51,25 @@ CREATE TABLE IF NOT EXISTS movement_care_log (
 
 CREATE INDEX IF NOT EXISTS idx_care_log_date ON movement_care_log(date DESC);
 
+-- Movement CARE debriefs -----------------------------------------------
+CREATE TABLE IF NOT EXISTS movement_care_debriefs (
+  id              TEXT PRIMARY KEY,
+  date            TEXT NOT NULL,
+  ulid            TEXT NOT NULL,
+  customer_name   TEXT,
+  draft_code      TEXT,
+  goal            TEXT,
+  done            TEXT,
+  went_well       TEXT,
+  went_badly      TEXT,
+  problems        TEXT,
+  message         TEXT,
+  sent_on_whatsapp BOOLEAN DEFAULT 0,
+  created_at      TEXT DEFAULT (datetime('now'))
+);
+
+CREATE INDEX IF NOT EXISTS idx_care_debriefs_date ON movement_care_debriefs(date DESC);
+
 -- Booking Flow closing promises ----------------------------------------
 CREATE TABLE IF NOT EXISTS booking_closing_promises (
   id              TEXT PRIMARY KEY,

@@ -55,6 +55,7 @@ export const api = {
   movementCare: {
     saveCommitment: (data: unknown) => post("/api/movement-care/commitment", data),
     saveReport: (data: unknown) => post("/api/movement-care/report", data),
+    saveDebrief: (data: unknown) => post("/api/movement-care/debrief", data),
     forDate: (date: string) => get(`/api/movement-care?date=${date}`),
   },
 

@@ -315,30 +315,38 @@ function nextStepFor(lead: MovementState, agenda: AgendaKey, c: CallCapture, out
   const step = (kind: NextActionKind, label: string, h: number): NextStepPlan => ({ kind, label, dueAt: inHours(h) });
 
   if (outcome === "not-relevant") return step("recheck-later", "Close — not relevant", 720);
-  if (outcome === "call-later") return step("call", "Call back at the agreed time", 3);
-  if (outcome === "no-answer") return step("call", "Retry call after the WhatsApp attempt", 3);
+  if (outcome === "call-later") return step("call", "Call back at the agreed time", 24);
+  if (outcome === "no-answer") return step("call", "Retry call after the WhatsApp attempt", 24);
+
+  // Parse quick action outcomes
+  if (c.note === "Customer agreed to tour") return step("confirm-tour", "Confirm tour schedule", 24);
+  if (c.note === "Customer pushed to next week") return step("call", "Call back next week", 168);
+  if (c.note === "Customer hung up") return step("call", "Retry hung up customer", 0.75); // 45 minutes
+  if (c.note === "Needs to discuss with family") return step("call", "Family discussion follow up", 24);
+  if (c.note === "Budget is too low") return step("send-property", "Find cheaper alternative", 0.75); // 45 minutes
+  if (c.note === "Wants closer to office") return step("send-property", "Find properties near office", 0.75); // 45 minutes
 
   switch (agenda) {
-    case "qualification": return step("send-property", "Find and send matching properties", 1);
+    case "qualification": return step("send-property", "Find and send matching properties", 0.75);
     case "property-intro": return step("call", "Property feedback call", 4);
     case "property-feedback":
       if (c.reaction === "loved" || c.reaction === "liked-comparing")
-        return cta === "visit" ? step("confirm-tour", "Schedule the tour", 3) : step("send-quote", "Share pricing and hold the room", 3);
-      return step("send-property", "Send an alternative property", 2);
+        return cta === "visit" ? step("confirm-tour", "Schedule the tour", 24) : step("send-quote", "Share pricing and hold the room", 0.75);
+      return step("send-property", "Send an alternative property", 24);
     case "price":
       if (c.priceReaction === "accepted" || c.priceReaction === "reasonable")
-        return cta === "visit" ? step("confirm-tour", "Schedule the tour", 3) : step("collect-payment", "Pre-book the room", 4);
-      if (c.priceReaction === "too-expensive") return step("send-property", "Send a more affordable option", 2);
-      return step("call", "Price decision follow-up call", 5);
+        return cta === "visit" ? step("confirm-tour", "Schedule the tour", 24) : step("collect-payment", "Pre-book the room", 4);
+      if (c.priceReaction === "too-expensive") return step("send-property", "Send a more affordable option", 0.75);
+      return step("call", "Price decision follow-up call", 24);
     case "tour-schedule": return step("confirm-tour", "Confirm attendance before the visit", 4);
     case "tour-confirm": return step("post-tour-call", "Post-tour feedback call", 8);
-    case "post-tour": return step("send-quote", "Send the quotation", 2);
+    case "post-tour": return step("send-quote", "Send the quotation", 0.75);
     case "closing": return step("collect-payment", "Collect the booking amount", 4);
-    case "objection": return step("call", "Resolution follow-up", 5);
-    case "alternative": return step("send-property", "Send the alternative option", 1);
+    case "objection": return step("call", "Resolution follow-up", 24);
+    case "alternative": return step("send-property", "Send the alternative option", 0.75);
     case "future": return step("recheck-later", "Reconnect near the move-in date", 168);
     case "check-in": return step("recheck-later", "Confirm the move-in happened", 24);
-    default: return step("call", "Follow-up call", 6);
+    default: return step("call", "Follow-up call", 24);
   }
 }
 
