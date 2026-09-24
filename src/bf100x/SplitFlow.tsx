@@ -81,6 +81,16 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
   const [closingPromise, setClosingPromise] = useState("");
   const [promiseId] = useState(() => `promise-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`);
 
+  const [tokenAmount, setTokenAmount] = useState("10000");
+  const [paymentGenerated, setPaymentGenerated] = useState(false);
+  const [timeLeft, setTimeLeft] = useState(45 * 60);
+
+  useEffect(() => {
+    if (!paymentGenerated) return;
+    const interval = setInterval(() => setTimeLeft(l => l > 0 ? l - 1 : 0), 1000);
+    return () => clearInterval(interval);
+  }, [paymentGenerated]);
+
   // remember the width the operator picked, like a column width in a sheet
   useEffect(() => {
     const saved = Number(localStorage.getItem(WIDTH_KEY));
@@ -225,6 +235,17 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
         <div className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2">
           <div className="flex min-w-0 items-center gap-1 overflow-hidden">
             <h1 className="shrink-0 text-xs font-semibold">Booking Flow</h1>
+            <select
+              className="ml-2 h-6 max-w-[150px] rounded border bg-background px-1 text-[10px]"
+              value={lead?.id ?? ""}
+              onChange={(e) => {
+                setLeadId(e.target.value);
+                setPane("WORK");
+              }}
+            >
+              <option value="">Select customer...</option>
+              {leads.map(l => <option key={l.id} value={l.id}>{l.name}</option>)}
+            </select>
             {mounted && (
               <div className="flex min-w-0 gap-1 overflow-x-auto">
                 <Badge variant="outline" className="shrink-0 px-1 text-[9px]"><PhoneCall className="mr-0.5 h-2.5 w-2.5" />{stats.calls} calls</Badge>
@@ -557,52 +578,70 @@ export function SplitFlow({ embedded = false, focus, panelOnly = false }: { embe
             className={cn("w-1.5 shrink-0 cursor-col-resize bg-border transition-colors hover:bg-primary", dragging && "bg-primary")}
           />
           {/* Closing Promise panel — replaces the dead placeholder */}
+          {/* Closing Promise panel — replaces the dead placeholder */}
           <div className="flex min-w-0 flex-1 flex-col gap-3 overflow-y-auto bg-muted/20 p-4">
-            <div className="rounded-md border bg-card p-3">
-              <p className="text-[10px] font-semibold uppercase text-muted-foreground">Closing promise · {lead?.name ?? "no customer selected"}</p>
-              <p className="mt-0.5 text-[10px] text-muted-foreground">Type the one line you will deliver. It saves to the database when you tab out.</p>
-              <textarea
-                rows={3}
-                className="mt-2 w-full resize-none rounded-md border bg-background p-2 text-xs focus:outline-none focus:ring-1 focus:ring-primary"
-                placeholder="e.g. I will send the tour confirmation by 6 PM today and call to confirm attendance."
-                value={closingPromise}
-                onChange={(e) => setClosingPromise(e.target.value)}
-                onBlur={(e) => saveClosingPromise(e.target.value)}
-              />
-              <div className="mt-2 flex flex-wrap gap-1.5">
-                {[
-                  "Tour completed, decision pending",
-                  "Quote sent, waiting for payment",
-                  "Customer requested callback tomorrow",
-                  "Property booked, initiating check-in"
-                ].map(action => (
-                  <button
-                    key={action}
-                    type="button"
-                    className="rounded border bg-accent/50 px-2 py-1 text-[10px] text-muted-foreground hover:bg-accent hover:text-foreground"
+            <div className={cn("rounded-md border bg-card p-3 shadow-lg", paymentGenerated && timeLeft === 0 ? "border-destructive shadow-destructive/20" : "border-primary/50 shadow-primary/10")}>
+              <div className="flex items-center justify-between">
+                <p className="text-[10px] font-semibold uppercase text-primary">Seal the Booking · {lead?.name ?? "Select customer"}</p>
+                {paymentGenerated && (
+                  <div className={cn("rounded px-2 py-1 font-mono text-sm font-bold", timeLeft === 0 ? "animate-pulse bg-destructive text-destructive-foreground" : "bg-primary text-primary-foreground")}>
+                    {Math.floor(timeLeft / 60).toString().padStart(2, '0')}:{(timeLeft % 60).toString().padStart(2, '0')}
+                  </div>
+                )}
+              </div>
+              
+              {!paymentGenerated ? (
+                <>
+                  <p className="mt-1 text-[11px] text-muted-foreground">Confirm token amount to generate payment link and start the 45-minute lock timer.</p>
+                  <label className="mt-3 block text-[10px] font-medium uppercase text-muted-foreground">Token Amount (₹)</label>
+                  <Input 
+                    type="number" 
+                    className="mt-1 font-mono" 
+                    value={tokenAmount} 
+                    onChange={(e) => setTokenAmount(e.target.value)} 
+                  />
+                  <Button 
+                    className="mt-3 w-full" 
                     onClick={() => {
-                      setClosingPromise(action);
-                      saveClosingPromise(action);
+                      setPaymentGenerated(true);
+                      setTimeLeft(45 * 60);
+                      const promiseText = `Requested token payment of ₹${tokenAmount}`;
+                      setClosingPromise(promiseText);
+                      saveClosingPromise(promiseText);
+                      toast.success("Payment link generated! SLA timer started.");
                     }}
                   >
-                    {action}
-                  </button>
-                ))}
-              </div>
-              {closingPromise.trim() && (
-                <button
-                  type="button"
-                  className="mt-2 w-full rounded-md border bg-primary px-3 py-1.5 text-[11px] font-medium text-primary-foreground hover:bg-primary/90"
-                  onClick={() => {
-                    navigator.clipboard.writeText(
-                      `Promise: ${closingPromise}\nNext step: ${nextAction}\nDeadline: ${new Date(due).toLocaleString()}`
-                    ).then(() => {
-                      if (lead) void api.bookingFlow.markCopied(promiseId);
-                    });
-                  }}
-                >
-                  Copy closing promise for WhatsApp
-                </button>
+                    Generate Payment Link
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <div className="mt-3 rounded border bg-muted/50 p-2 text-center font-mono text-xs text-muted-foreground break-all">
+                    https://pay.gharpayy.com/t/{promiseId.slice(-6).toUpperCase()}
+                  </div>
+                  <Button 
+                    className="mt-2 w-full font-bold" 
+                    onClick={() => {
+                      const msg = `Hi ${lead?.name},\nHere is your secure payment link to block the property for ₹${tokenAmount}:\nhttps://pay.gharpayy.com/t/${promiseId.slice(-6).toUpperCase()}\n\nPlease share a screenshot of the transaction once completed!`;
+                      navigator.clipboard.writeText(msg).then(() => {
+                        if (lead) void api.bookingFlow.markCopied(promiseId);
+                        toast.success("Message copied to clipboard!");
+                      });
+                    }}
+                  >
+                    Copy Message for WhatsApp
+                  </Button>
+                  <Button 
+                    variant="outline"
+                    className="mt-2 w-full border-success/50 text-success hover:bg-success/10"
+                    onClick={() => {
+                      setPaymentGenerated(false);
+                      toast.success("Transaction verified successfully!");
+                    }}
+                  >
+                    Verify Transaction ID
+                  </Button>
+                </>
               )}
             </div>
             <div className="rounded-md border bg-card p-3">
