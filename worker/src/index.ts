@@ -16,7 +16,7 @@ const app = new Hono<{ Bindings: Bindings }>();
 app.use(
   '/api/*',
   cors({
-    origin: ['http://localhost:8080', 'http://localhost:8081', 'http://localhost:5173', 'https://your-vercel-app.vercel.app'],
+    origin: ['http://localhost:8080', 'http://localhost:8081', 'http://localhost:5173', 'https://a3x-gg-7ago.vercel.app'],
     credentials: true,
   })
 );

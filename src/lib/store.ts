@@ -195,6 +195,7 @@ export const useApp = create<AppState>((set, get) => ({
     set((s) => ({
       leads: s.leads.map((l) => (l.id === leadId ? { ...l, intent } : l)),
     }));
+    void api.crm.updateLead(leadId, { intent });
   },
 
   setLeadFollowUp: (leadId, dueAt, priority, reason = "Manual follow-up") => {
@@ -217,6 +218,8 @@ export const useApp = create<AppState>((set, get) => ({
         l.id === leadId && !l.tags.includes(tag) ? { ...l, tags: [...l.tags, tag] } : l,
       ),
     }));
+    const lead = get().leads.find(l => l.id === leadId);
+    if (lead) void api.crm.updateLead(leadId, { tags: JSON.stringify(lead.tags) });
   },
 
   removeLeadTag: (leadId, tag) => {
@@ -225,6 +228,8 @@ export const useApp = create<AppState>((set, get) => ({
         l.id === leadId ? { ...l, tags: l.tags.filter((t) => t !== tag) } : l,
       ),
     }));
+    const lead = get().leads.find(l => l.id === leadId);
+    if (lead) void api.crm.updateLead(leadId, { tags: JSON.stringify(lead.tags) });
   },
 
   scheduleTour: ({ leadId, propertyId, tcmId, scheduledAt }) => {
@@ -244,6 +249,16 @@ export const useApp = create<AppState>((set, get) => ({
         l.id === leadId ? { ...l, stage: "tour-scheduled", updatedAt: new Date().toISOString() } : l,
       ),
     }));
+    void api.crm.saveTour({
+      id: tour.id,
+      lead_id: tour.leadId,
+      property_id: tour.propertyId,
+      tcm_id: tour.tcmId,
+      scheduled_at: tour.scheduledAt,
+      status: tour.status,
+      decision: tour.decision
+    });
+    void api.crm.updateLead(leadId, { stage: "tour-scheduled" });
     pushActivity(set, get, {
       kind: "tour_scheduled", actor: tcmId, leadId, tourId: tour.id, propertyId,
       text: `Tour scheduled for ${lead.name}`,
@@ -278,6 +293,7 @@ export const useApp = create<AppState>((set, get) => ({
         x.id === tourId ? { ...x, status: "cancelled", updatedAt: new Date().toISOString() } : x,
       ),
     }));
+    void api.crm.updateTour(tourId, { status: "cancelled" });
     pushActivity(set, get, { kind: "tour_cancelled", actor: get().role, leadId: t.leadId, tourId, text: "Tour cancelled" });
   },
 
@@ -287,6 +303,7 @@ export const useApp = create<AppState>((set, get) => ({
         x.id === tourId ? { ...x, scheduledAt, updatedAt: new Date().toISOString() } : x,
       ),
     }));
+    void api.crm.updateTour(tourId, { scheduled_at: scheduledAt });
     const t = get().tours.find((x) => x.id === tourId);
     if (t) pushActivity(set, get, { kind: "tour_scheduled", actor: get().role, leadId: t.leadId, tourId, text: "Tour rescheduled" });
   },
@@ -302,6 +319,8 @@ export const useApp = create<AppState>((set, get) => ({
         l.id === t.leadId ? { ...l, stage: "tour-done", updatedAt: new Date().toISOString() } : l,
       ),
     }));
+    void api.crm.updateTour(tourId, { status: "completed" });
+    void api.crm.updateLead(t.leadId, { stage: "tour-done" });
     pushActivity(set, get, { kind: "tour_completed", actor: t.tcmId, leadId: t.leadId, tourId, text: "Tour marked completed" });
     // Bridge → owner: every completed tour bumps the room's view counter
     const prop = get().properties.find((p) => p.id === t.propertyId);
@@ -332,6 +351,8 @@ export const useApp = create<AppState>((set, get) => ({
           : l,
       ),
     }));
+    void api.crm.updateTour(tourId, { decision });
+    void api.crm.updateLead(t.leadId, { stage: decision === "booked" ? "booked" : decision === "dropped" ? "dropped" : "negotiation" });
     pushActivity(set, get, {
       kind: "decision_logged", actor: t.tcmId, leadId: t.leadId, tourId,
       text: `Decision: ${decision ?? "—"}`,
@@ -371,6 +392,7 @@ export const useApp = create<AppState>((set, get) => ({
           : l,
       ),
     }));
+    void api.crm.updateTour(tourId, { post_tour_feedback: JSON.stringify(next) });
     if (next.nextFollowUpAt) {
       const exists = get().followUps.find((f) => f.tourId === tourId && !f.done);
       if (!exists) {
@@ -554,11 +576,20 @@ export const useApp = create<AppState>((set, get) => ({
 
 function pushActivity(
   set: (fn: (s: AppState) => Partial<AppState>) => void,
-  _get: () => AppState,
+  get: () => AppState,
   a: Omit<ActivityLog, "id" | "ts">,
 ) {
   const log: ActivityLog = { id: uid("a"), ts: new Date().toISOString(), ...a };
   set((s) => ({ activities: [log, ...s.activities] }));
+  void api.crm.saveActivity({
+    id: log.id,
+    lead_id: log.leadId,
+    type: log.kind,
+    text: log.text,
+    actor_id: log.actor === "system" ? "system" : (typeof log.actor === "string" && log.actor.startsWith("tcm-") ? log.actor : get().currentTcmId),
+    actor_name: log.actor === "system" ? "System" : personName(get().currentTcmId, "Agent"),
+    ts: log.ts
+  });
 }
 
 /* ============== SELECTORS / DERIVED ============== */
